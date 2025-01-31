@@ -5,3 +5,6 @@ pytesseract
 pandas
 openpyxl
 pillow
+streamlit
+wand
+PyPDF2

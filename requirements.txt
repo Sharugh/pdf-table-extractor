@@ -1,10 +1,7 @@
 streamlit
-camelot-py
-pdfplumber
+PyPDF2
 pytesseract
+pdf2image
+pillow
 pandas
 openpyxl
-pillow
-streamlit
-wand
-PyPDF2

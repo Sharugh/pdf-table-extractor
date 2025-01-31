@@ -1,83 +1,59 @@
 import os
 import pandas as pd
 import streamlit as st
-from wand.image import Image
-from PyPDF2 import PdfReader
-from pytesseract import image_to_string, pytesseract
-from io import BytesIO
-from PIL import Image as PILImage
+import pdfplumber
+import pytesseract
+from PIL import Image
 
-# Path to Tesseract OCR (update the path based on your system)
-pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"  # Update for Windows users
+# Configure Tesseract OCR (Optional, for local testing)
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"  # Update path as needed
 
-# Streamlit app title
-st.title("PDF Table Extractor with OCR")
+# Function to extract tables and OCR text from a PDF
+def extract_data_from_pdf(pdf_path):
+    extracted_data = pd.DataFrame()
 
-# Upload multiple PDFs
-uploaded_files = st.file_uploader("Upload PDF files (scanned or standard)", accept_multiple_files=True, type=["pdf"])
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                # Extract tables
+                tables = page.extract_tables()
+                for table in tables:
+                    df = pd.DataFrame(table[1:], columns=table[0])  # First row as header
+                    extracted_data = pd.concat([extracted_data, df], ignore_index=True)
+                
+                # OCR for scanned images
+                if not tables:
+                    st.warning(f"No tables detected on page {page.page_number}. Attempting OCR.")
+                    img = page.to_image()
+                    text = pytesseract.image_to_string(img)
+                    st.text(f"OCR text from page {page.page_number}:\n{text}")
+    except Exception as e:
+        st.error(f"Error processing {pdf_path}: {str(e)}")
+
+    return extracted_data
+
+# Streamlit app
+st.title("PDF Table & OCR Extractor")
+uploaded_files = st.file_uploader("Upload PDF files", type=["pdf"], accept_multiple_files=True)
 
 if uploaded_files:
-    # Create a temporary directory for intermediate files
-    temp_dir = "temp_images"
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    # Initialize output Excel data
-    excel_data = {}
+    output_path = "extracted_data.xlsx"
+    final_data = pd.DataFrame()
 
-    for uploaded_file in uploaded_files:
-        try:
-            st.write(f"Processing {uploaded_file.name}...")
-            pdf_name = uploaded_file.name
-            # Read the uploaded PDF
-            pdf_reader = PdfReader(uploaded_file)
+    for pdf_file in uploaded_files:
+        st.info(f"Processing {pdf_file.name}...")
+        pdf_path = f"/tmp/{pdf_file.name}"
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_file.read())
 
-            # Loop through all pages in the PDF
-            for page_num, page in enumerate(pdf_reader.pages):
-                st.write(f"Processing page {page_num + 1} of {pdf_name}...")
-                # Save the PDF page as an image using Wand
-                with Image(blob=page.extract_text_as_bytes(), resolution=300) as img:
-                    img_path = os.path.join(temp_dir, f"page_{page_num + 1}.jpg")
-                    img.save(filename=img_path)
+        data = extract_data_from_pdf(pdf_path)
+        if not data.empty:
+            final_data = pd.concat([final_data, data], ignore_index=True)
 
-                # Perform OCR on the image using pytesseract
-                with PILImage.open(img_path) as pil_img:
-                    ocr_text = image_to_string(pil_img)
-
-                # Convert OCR text to structured data
-                st.write(f"OCR extracted text from page {page_num + 1}:")
-                st.text(ocr_text)
-
-                # Extract table data (naive approach, you may need custom parsing for specific table structures)
-                table_data = [line.split() for line in ocr_text.split("\n") if line.strip()]
-                df = pd.DataFrame(table_data)
-
-                # Append to Excel data
-                excel_data[f"{pdf_name}_page_{page_num + 1}"] = df
-
-        except Exception as e:
-            st.error(f"Error processing {uploaded_file.name}: {e}")
-
-    # Export to Excel
-    if excel_data:
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            for sheet_name, df in excel_data.items():
-                df.to_excel(writer, sheet_name=sheet_name[:31], index=False)
-
-        st.success("PDF data extracted successfully!")
-
-        # Provide the Excel file for download
-        st.download_button(
-            label="Download Excel File",
-            data=output.getvalue(),
-            file_name="extracted_data.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    # Clean up temporary files
-    for file in os.listdir(temp_dir):
-        os.remove(os.path.join(temp_dir, file))
-    os.rmdir(temp_dir)
-
-else:
-    st.info("Please upload PDF files to start processing.")
+    if not final_data.empty:
+        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+            final_data.to_excel(writer, index=False, sheet_name="Extracted Data")
+        st.success(f"Excel file created: {output_path}")
+        st.download_button("Download Excel File", data=open(output_path, "rb").read(), file_name="extracted_data.xlsx")
+    else:
+        st.error("No data extracted from the uploaded PDFs.")

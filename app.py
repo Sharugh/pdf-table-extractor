@@ -1,74 +1,78 @@
-import streamlit as st
 import os
+import streamlit as st
+import pdfplumber
 import pytesseract
-from pdf2image import convert_from_path
 from PIL import Image
 import pandas as pd
+import camelot
 
-# Set the path to tesseract if not installed globally (adjust path accordingly)
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'  # for Windows
+# Configure Tesseract for OCR
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"  # Adjust path for your system
 
-def extract_text_from_image(pdf_file):
-    images = convert_from_path(pdf_file)  # Convert PDF to images
-    text = ""
-    
-    # Perform OCR on each image and extract text
-    for page_number, image in enumerate(images):
-        text += pytesseract.image_to_string(image)
-    
-    return text
+# Function to extract tables from PDFs
+def extract_tables_from_pdf(pdf_path):
+    tables = []
+    try:
+        extracted_tables = camelot.read_pdf(pdf_path, pages="all", flavor="stream")
+        for table in extracted_tables:
+            tables.append(table.df)
+    except Exception as e:
+        tables.append(pd.DataFrame([["Error extracting table:", str(e)]]))
+    return tables
 
-def extract_table_from_text(text):
-    # Process the text and extract tabular data
-    # This part depends on the structure of the text; use regex or manual parsing
-    # For simplicity, you can attempt to convert the text into a DataFrame
-    data = []
-    lines = text.split('\n')
-    
-    for line in lines:
-        columns = line.split()  # Adjust based on how the columns are separated
-        if len(columns) > 1:
-            data.append(columns)
-    
-    return pd.DataFrame(data)
+# Function to perform OCR on scanned PDFs
+def perform_ocr_on_images(pdf_path):
+    extracted_text = []
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page in pdf.pages:
+                if not page.extract_text():  # If no text is found
+                    image = page.to_image()
+                    ocr_text = pytesseract.image_to_string(image.original)
+                    extracted_text.append(ocr_text)
+    except Exception as e:
+        extracted_text.append(f"Error performing OCR: {e}")
+    return extracted_text
 
-def process_pdf(pdf_file):
-    # Extract text using OCR
-    text = extract_text_from_image(pdf_file)
-    
-    if not text:
-        st.error(f"No text found in {pdf_file}. Please check if it's a valid scanned document.")
-        return None
-    
-    # Extract table data
-    df = extract_table_from_text(text)
-    
-    if df.empty:
-        st.error(f"No table data found in {pdf_file}.")
-        return None
-    
-    return df
+# Streamlit App
+st.title("PDF Table Extractor")
+st.write("Upload your PDF files containing tables (including scanned PDFs) and extract their data into an Excel file.")
 
-def main():
-    st.title("PDF Table Extractor using OCR")
-    uploaded_files = st.file_uploader("Upload PDF Files", accept_multiple_files=True)
-    
-    if uploaded_files:
-        all_dfs = []
+# File uploader
+uploaded_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
+
+if uploaded_files:
+    all_tables = []
+    output_path = "extracted_data.xlsx"
+
+    for pdf_file in uploaded_files:
+        st.write(f"Processing {pdf_file.name}...")
         
-        for uploaded_file in uploaded_files:
-            st.write(f"Processing {uploaded_file.name}...")
-            df = process_pdf(uploaded_file)
-            if df is not None:
-                all_dfs.append(df)
-        
-        # Combine all DataFrames into one Excel file and download
-        if all_dfs:
-            final_df = pd.concat(all_dfs, ignore_index=True)
-            output_file = "extracted_data.xlsx"
-            final_df.to_excel(output_file, index=False)
-            st.success("Tables extracted successfully! Download your Excel file.")
-            st.download_button("Download Excel", final_df.to_excel(index=False), file_name=output_file)
+        # Save uploaded file temporarily
+        with open(pdf_file.name, "wb") as f:
+            f.write(pdf_file.getbuffer())
 
-if __name__ == "__main__":
-    main()
+        # Extract tables
+        tables = extract_tables_from_pdf(pdf_file.name)
+        all_tables.extend(tables)
+
+        # Perform OCR for scanned PDFs (if needed)
+        ocr_text = perform_ocr_on_images(pdf_file.name)
+        if ocr_text:
+            st.write(f"OCR text from {pdf_file.name}:")
+            st.write("\n".join(ocr_text))
+
+    # Combine all tables into a single Excel file
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        for i, table in enumerate(all_tables):
+            table.to_excel(writer, index=False, sheet_name=f"Table_{i + 1}")
+
+    # Download link
+    with open(output_path, "rb") as file:
+        btn = st.download_button(
+            label="Download Extracted Data",
+            data=file,
+            file_name="extracted_data.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+

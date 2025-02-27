@@ -6,8 +6,8 @@ from PIL import Image
 import pandas as pd
 import pdf2image
 
-# Configure Tesseract OCR (Update if installed elsewhere)
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\"
+# Set Tesseract OCR Path (Update if installed in a different location)
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # Function to extract tables from digital PDFs using pdfplumber
 def extract_tables_from_pdf(pdf_path):
@@ -16,7 +16,8 @@ def extract_tables_from_pdf(pdf_path):
         for page in pdf.pages:
             extracted_tables = page.extract_tables()
             for table in extracted_tables:
-                tables.append(pd.DataFrame(table))
+                if table:  # Ensure table is not empty
+                    tables.append(pd.DataFrame(table))
     return tables
 
 # Function to extract tables from scanned PDFs (Images) using OCR
@@ -37,7 +38,7 @@ def extract_tables_from_images(pdf_path):
 
 # Streamlit App UI
 st.title("📄 PDF Table Extractor")
-st.write("Upload your PDF files (both **digital PDFs & scanned PDFs**) to extract tables into an **Excel sheet**.")
+st.write("Upload **both digital PDFs & scanned PDFs**, and extract tables into an **Excel sheet**.")
 
 uploaded_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
 
@@ -48,11 +49,12 @@ if uploaded_files:
     for pdf_file in uploaded_files:
         st.write(f"🔄 Processing `{pdf_file.name}`...")
 
+        # Save uploaded file temporarily
         temp_pdf_path = f"temp_{pdf_file.name}"
         with open(temp_pdf_path, "wb") as f:
             f.write(pdf_file.getbuffer())
 
-        # Try extracting tables using pdfplumber (for digital PDFs)
+        # Extract tables using pdfplumber (for digital PDFs)
         tables = extract_tables_from_pdf(temp_pdf_path)
 
         # If no tables found, use OCR for scanned PDFs
@@ -76,4 +78,5 @@ if uploaded_files:
             )
     else:
         st.error("⚠ No tables were extracted. Please check your PDF files!")
+
 
